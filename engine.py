@@ -1,0 +1,296 @@
+"""
+LagForge - Core Packet Delay Engine
+Implements real-time packet interception and delay injection using WinDivert.
+"""
+
+import sys
+import time
+import queue
+import logging
+import threading
+from typing import Optional
+
+from PySide6.QtCore import QObject, Signal, QThread
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(threadName)s: %(message)s")
+logger = logging.getLogger("LagForge.Engine")
+
+try:
+    import pydivert
+    HAS_PYDIVERT = True
+except ImportError:
+    HAS_PYDIVERT = False
+    logger.warning("pydivert module not found. Engine will run in simulation mode.")
+
+
+class PacketDelayEngine(QObject):
+    """
+    Main controller for the network latency engine.
+    Orchestrates WinDivert packet capture, priority scheduling, and packet reinjection.
+    """
+
+    # Signals
+    started = Signal()
+    stopped = Signal()
+    error_occurred = Signal(str)
+    telemetry_updated = Signal(int, float, float, float, float)
+    # (total_delayed, packets_per_sec, inbound_ms, outbound_ms, sparkline_point)
+
+    def __init__(self, filter_rule: str = "!loopback", parent: Optional[QObject] = None):
+        super().__init__(parent)
+        self.filter_rule = filter_rule
+        self._target_ping_ms: float = 325.0
+        self._is_active: bool = False
+
+        # Threading and Queues
+        self._queue: queue.PriorityQueue = queue.PriorityQueue()
+        self._capture_thread: Optional[threading.Thread] = None
+        self._sender_thread: Optional[threading.Thread] = None
+        self._telemetry_thread: Optional[threading.Thread] = None
+
+        self._stop_event = threading.Event()
+        self._divert_handle: Optional[object] = None
+        self._seq_counter = 0
+
+        # Stats
+        self._total_delayed_packets: int = 0
+        self._recent_delayed_packets: int = 0
+        self._lock = threading.Lock()
+
+    @property
+    def target_ping_ms(self) -> float:
+        return self._target_ping_ms
+
+    @target_ping_ms.setter
+    def target_ping_ms(self, val: float):
+        with self._lock:
+            self._target_ping_ms = max(0.0, float(val))
+
+    @property
+    def is_active(self) -> bool:
+        return self._is_active
+
+    def start(self, target_ping_ms: Optional[float] = None):
+        """Starts packet interception and delay injection."""
+        if self._is_active:
+            return
+
+        if target_ping_ms is not None:
+            self.target_ping_ms = target_ping_ms
+
+        self._stop_event.clear()
+        self._is_active = True
+
+        # Clear any stale packets in queue
+        while not self._queue.empty():
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                break
+
+        # Start capture & send threads
+        self._capture_thread = threading.Thread(
+            target=self._capture_worker, name="LagForge-CaptureWorker", daemon=True
+        )
+        self._sender_thread = threading.Thread(
+            target=self._sender_worker, name="LagForge-SenderWorker", daemon=True
+        )
+        self._telemetry_thread = threading.Thread(
+            target=self._telemetry_worker, name="LagForge-TelemetryWorker", daemon=True
+        )
+
+        self._capture_thread.start()
+        self._sender_thread.start()
+        self._telemetry_thread.start()
+
+        self.started.emit()
+        logger.info(f"Engine started. Target ping: {self._target_ping_ms}ms (Filter: {self.filter_rule})")
+
+    def stop(self):
+        """Stops interception and cleans up WinDivert handles safely."""
+        if not self._is_active:
+            return
+
+        logger.info("Stopping engine...")
+        self._is_active = False
+        self._stop_event.set()
+
+        # Safely close WinDivert handle to unblock recv()
+        if self._divert_handle is not None:
+            try:
+                self._divert_handle.close()
+            except Exception as e:
+                logger.debug(f"Error closing WinDivert handle: {e}")
+            self._divert_handle = None
+
+        # Re-inject remaining queued packets immediately so network doesn't drop
+        self._flush_queue()
+
+        # Join threads with timeout
+        for t in (self._capture_thread, self._sender_thread, self._telemetry_thread):
+            if t and t.is_alive():
+                t.join(timeout=0.3)
+
+        self.stopped.emit()
+        logger.info("Engine stopped safely.")
+
+    def _flush_queue(self):
+        """Flushes remaining queued packets by sending them out or clearing safely."""
+        count = 0
+        while not self._queue.empty():
+            try:
+                _, _, packet = self._queue.get_nowait()
+                if self._divert_handle is not None and hasattr(self._divert_handle, "send"):
+                    try:
+                        self._divert_handle.send(packet)
+                    except Exception:
+                        pass
+                count += 1
+            except queue.Empty:
+                break
+        if count > 0:
+            logger.info(f"Flushed {count} lingering packets on shutdown.")
+
+    def _capture_worker(self):
+        """Worker thread that captures packets using pydivert."""
+        if not HAS_PYDIVERT:
+            self._simulate_capture_worker()
+            return
+
+        try:
+            # Open WinDivert handle
+            self._divert_handle = pydivert.WinDivert(filter=self.filter_rule)
+            self._divert_handle.open()
+        except PermissionError:
+            err = "Administrator privileges required to open WinDivert driver."
+            logger.error(err)
+            self.error_occurred.emit(err)
+            self._stop_event.set()
+            self._is_active = False
+            return
+        except Exception as e:
+            err = f"Failed to initialize WinDivert handle: {e}"
+            logger.error(err)
+            self.error_occurred.emit(err)
+            self._stop_event.set()
+            self._is_active = False
+            return
+
+        logger.info("WinDivert capture handle opened successfully.")
+
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    packet = self._divert_handle.recv()
+                    if packet is None:
+                        continue
+
+                    # Half-RTT ping math: delay is split equally between inbound and outbound
+                    with self._lock:
+                        current_ping = self._target_ping_ms
+
+                    half_delay_sec = (current_ping / 2.0) / 1000.0
+
+                    if half_delay_sec <= 0.0001:
+                        # Immediate pass-through
+                        try:
+                            self._divert_handle.send(packet)
+                        except Exception:
+                            pass
+                    else:
+                        release_time = time.perf_counter() + half_delay_sec
+                        self._seq_counter = (self._seq_counter + 1) & 0x7FFFFFFF
+                        self._queue.put((release_time, self._seq_counter, packet))
+
+                    with self._lock:
+                        self._total_delayed_packets += 1
+                        self._recent_delayed_packets += 1
+
+                except Exception as ex:
+                    if self._stop_event.is_set():
+                        break
+                    logger.debug(f"Capture loop recv exception: {ex}")
+                    time.sleep(0.001)
+
+        finally:
+            if self._divert_handle is not None:
+                try:
+                    self._divert_handle.close()
+                except Exception:
+                    pass
+                self._divert_handle = None
+
+    def _sender_worker(self):
+        """Worker thread that re-injects delayed packets at exact target times."""
+        while not self._stop_event.is_set():
+            try:
+                # Peek at the earliest packet
+                if self._queue.empty():
+                    time.sleep(0.0005)
+                    continue
+
+                item = self._queue.get(timeout=0.01)
+                release_time, seq, packet = item
+
+                now = time.perf_counter()
+                time_to_wait = release_time - now
+
+                if time_to_wait > 0.001:
+                    # Hybrid sleep + spinwait for sub-millisecond precision
+                    time.sleep(time_to_wait * 0.8)
+                    while time.perf_counter() < release_time:
+                        pass
+
+                # Send packet back
+                if not self._stop_event.is_set() and self._divert_handle is not None:
+                    try:
+                        self._divert_handle.send(packet)
+                    except Exception as e:
+                        logger.debug(f"Error sending packet: {e}")
+
+            except queue.Empty:
+                continue
+            except Exception as ex:
+                if not self._stop_event.is_set():
+                    logger.debug(f"Sender worker exception: {ex}")
+
+    def _simulate_capture_worker(self):
+        """Simulation mode fallback if WinDivert driver is not loaded / demo mode."""
+        logger.info("Running in simulation mode for UI demonstration.")
+        import random
+        while not self._stop_event.is_set():
+            # Simulate bursty network traffic
+            sim_burst = random.randint(5, 25)
+            with self._lock:
+                self._total_delayed_packets += sim_burst
+                self._recent_delayed_packets += sim_burst
+            time.sleep(0.05)
+
+    def _telemetry_worker(self):
+        """Publishes real-time telemetry updates for UI and sparkline at 20Hz."""
+        last_time = time.perf_counter()
+        while not self._stop_event.is_set():
+            time.sleep(0.05)  # 50ms interval (20 FPS)
+            now = time.perf_counter()
+            dt = max(0.001, now - last_time)
+            last_time = now
+
+            with self._lock:
+                total_cnt = self._total_delayed_packets
+                recent_cnt = self._recent_delayed_packets
+                self._recent_delayed_packets = 0
+                ping_ms = self._target_ping_ms
+
+            pps = recent_cnt / dt
+            half_ms = ping_ms / 2.0
+            sparkline_val = pps if self._is_active else 0.0
+
+            # Emit to UI
+            self.telemetry_updated.emit(
+                total_cnt,
+                pps,
+                half_ms,
+                half_ms,
+                sparkline_val
+            )
