@@ -1,6 +1,7 @@
 """
 LagForge - Core Packet Delay Engine
-Implements real-time packet interception, Gaussian jitter, packet drop probability, and delay injection using WinDivert.
+Implements real-time packet interception, Gaussian jitter, packet drop probability,
+delay injection, and real-time bandwidth / throughput measurement using WinDivert.
 """
 
 import sys
@@ -27,14 +28,14 @@ except ImportError:
 class PacketDelayEngine(QObject):
     """
     Main controller for the network latency engine.
-    Supports fixed latency, Gaussian jitter, and packet drop simulation.
+    Supports fixed latency, Gaussian jitter, packet drop simulation, and real-time throughput metrics.
     """
 
     started = Signal()
     stopped = Signal()
     error_occurred = Signal(str)
-    telemetry_updated = Signal(int, int, float, float, float, float)
-    # (total_delayed, total_dropped, pps, inbound_ms, outbound_ms, sparkline_point)
+    telemetry_updated = Signal(int, int, float, float, float, float, float, float)
+    # (total_delayed, total_dropped, pps, inbound_ms, outbound_ms, kbps_in, kbps_out, sparkline_point)
 
     def __init__(self, filter_rule: str = "!loopback", parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -53,10 +54,13 @@ class PacketDelayEngine(QObject):
         self._divert_handle: Optional[object] = None
         self._seq_counter = 0
 
+        # Stats
         self._total_delayed_packets: int = 0
         self._total_dropped_packets: int = 0
         self._recent_delayed_packets: int = 0
         self._recent_dropped_packets: int = 0
+        self._recent_bytes_in: int = 0
+        self._recent_bytes_out: int = 0
         self._lock = threading.Lock()
 
     @property
@@ -91,7 +95,6 @@ class PacketDelayEngine(QObject):
         return self._is_active
 
     def calculate_effective_latency_ms(self) -> float:
-        """Calculates effective latency with Gaussian jitter variance."""
         with self._lock:
             base_ping = self._target_ping_ms
             jitter = self._jitter_ms
@@ -105,7 +108,6 @@ class PacketDelayEngine(QObject):
         return max(0.0, base_ping + bounded_noise)
 
     def should_drop_packet(self) -> bool:
-        """Evaluates whether current packet should be dropped based on loss percentage."""
         with self._lock:
             loss_pct = self._packet_loss_pct
 
@@ -148,7 +150,7 @@ class PacketDelayEngine(QObject):
         self._telemetry_thread.start()
 
         self.started.emit()
-        logger.info(f"Engine started. Target ping: {self._target_ping_ms}ms ±{self._jitter_ms}ms (Loss: {self._packet_loss_pct}%)")
+        logger.info(f"Engine started. Ping: {self._target_ping_ms}ms ±{self._jitter_ms}ms (Loss: {self._packet_loss_pct}%)")
 
     def stop(self):
         if not self._is_active:
@@ -222,12 +224,21 @@ class PacketDelayEngine(QObject):
                     if packet is None:
                         continue
 
+                    # Record bandwidth stats
+                    pkt_len = len(packet.raw) if hasattr(packet, "raw") and packet.raw else 128
+                    is_inbound = getattr(packet, "is_inbound", True)
+
+                    with self._lock:
+                        if is_inbound:
+                            self._recent_bytes_in += pkt_len
+                        else:
+                            self._recent_bytes_out += pkt_len
+
                     # Check for simulated packet loss
                     if self.should_drop_packet():
                         with self._lock:
                             self._total_dropped_packets += 1
                             self._recent_dropped_packets += 1
-                        # Dropped: simply do not enqueue or re-inject
                         continue
 
                     # Calculate effective ping with jitter
@@ -299,11 +310,16 @@ class PacketDelayEngine(QObject):
         while not self._stop_event.is_set():
             sim_burst = random.randint(5, 25)
             sim_drop = 1 if self.should_drop_packet() else 0
+            bytes_in = sim_burst * random.randint(128, 1400)
+            bytes_out = sim_burst * random.randint(64, 800)
+
             with self._lock:
                 self._total_delayed_packets += sim_burst
                 self._recent_delayed_packets += sim_burst
                 self._total_dropped_packets += sim_drop
                 self._recent_dropped_packets += sim_drop
+                self._recent_bytes_in += bytes_in
+                self._recent_bytes_out += bytes_out
             time.sleep(0.05)
 
     def _telemetry_worker(self):
@@ -318,10 +334,16 @@ class PacketDelayEngine(QObject):
                 total_cnt = self._total_delayed_packets
                 dropped_cnt = self._total_dropped_packets
                 recent_cnt = self._recent_delayed_packets
+                bytes_in = self._recent_bytes_in
+                bytes_out = self._recent_bytes_out
                 self._recent_delayed_packets = 0
+                self._recent_bytes_in = 0
+                self._recent_bytes_out = 0
                 ping_ms = self._target_ping_ms
 
             pps = recent_cnt / dt
+            kbps_in = (bytes_in / 1024.0) / dt
+            kbps_out = (bytes_out / 1024.0) / dt
             half_ms = ping_ms / 2.0
             sparkline_val = pps if self._is_active else 0.0
 
@@ -331,5 +353,7 @@ class PacketDelayEngine(QObject):
                 pps,
                 half_ms,
                 half_ms,
+                kbps_in,
+                kbps_out,
                 sparkline_val
             )
