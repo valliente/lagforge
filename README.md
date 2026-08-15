@@ -1,7 +1,7 @@
 # LagForge ⚡
-> **Obsidian Glassmorphic Global Latency Control for Windows**
+> **Obsidian Glassmorphic Global Latency & Network Condition Control for Windows (v1.101)**
 
-LagForge is a high-performance Windows desktop application built with **Python**, **PySide6**, and **WinDivert** (`pydivert`) that injects artificial, controlled latency into system-wide network traffic for network resilience testing, game simulation, and QA engineering.
+LagForge is a high-performance Windows desktop application built with **Python**, **PySide6**, and **WinDivert** (`pydivert`) that injects artificial, controlled latency, Gaussian jitter, and packet loss into system-wide network traffic for network resilience testing, game simulation, and QA engineering.
 
 ---
 
@@ -9,16 +9,20 @@ LagForge is a high-performance Windows desktop application built with **Python**
 Designed with an **Obsidian Dark Glassmorphism** aesthetic:
 - **Base Background:** Deep Obsidian / Pitch Slate (`#090A0F`)
 - **Card Panels:** Frosted translucent slate (`#13151E`) with subtle `1px` borders (`#212638`) and `12px` rounded corners
-- **Accents:** Electric Cyan (`#00F0FF`) slider & highlights with Neon Emerald (`#10B981`) active indicators
-- **Live Telemetry:** Smooth rolling sparkline graph showing real-time network throughput and packet delay metrics
+- **Accents:** Electric Cyan (`#00F0FF`) slider & highlights with Neon Emerald (`#10B981`) active indicators and Coral (`#F43F5E`) packet drop counters
+- **Live Telemetry:** Smooth 60fps rolling sparkline graph showing real-time network throughput and packet delay metrics
 
 ---
 
-## 🚀 Key Features
+## 🚀 Key Features (v1.101)
 - 🎛️ **Precision Delay Slider**: Dynamically adjust latency from `0ms` to `1000ms` in real-time without restarting the network filter.
-- ⚡ **One-Click Presets**: Fast switching between common testing profiles (`+50ms`, `+100ms`, `+200ms`, `+500ms`).
+- 〰️ **Gaussian Packet Jitter**: Simulate erratic, fluctuating connections with customizable jitter (`0ms` to `±100ms`).
+- 🛑 **Packet Drop Simulation**: Emulate real-world packet loss (`0%` to `25%`) with stochastic drop algorithms.
+- ⚡ **One-Click Presets & Profiles**: Instant switching between presets (`+50ms`, `+100ms`, `+200ms`, `+500ms`) or save custom named profiles (`config.json`).
+- ⌨️ **Global Hotkey Toggle**: Press `F8` or `Ctrl+Shift+L` anywhere in Windows to toggle lag on/off without alt-tabbing out of fullscreen games.
+- 📥 **System Tray Quick-Switch**: Context menu to toggle active state or switch latency presets directly from the notification area.
 - 🔄 **Bidirectional Half-RTT Ping Engine**: Automatically splits target ping in half (`target_ping / 2.0`) to model real-world inbound and outbound RTT symmetry.
-- 📊 **Real-time Telemetry & Sparkline**: Live packet counter, packets-per-second throughput graph, and split Inbound/Outbound millisecond readouts.
+- 📊 **Real-time Telemetry & Sparkline**: Live packet counter, dropped packet counter, throughput (KB/s in/out), and split Inbound/Outbound millisecond readouts.
 - 🛡️ **Zero-Drop Clean Teardown**: Automatically drains and safely re-injects pending packets on shutdown so your network stack never stalls or hangs.
 - 🔑 **Automatic UAC Elevation**: Verifies Windows Administrator privileges at startup and requests elevation seamlessly via `runas`.
 
@@ -27,16 +31,22 @@ Designed with an **Obsidian Dark Glassmorphism** aesthetic:
 ## 🛠️ Project Structure
 ```
 lagforge/
-├── main.py                # App entry point, UAC admin elevation wrapper
-├── engine.py              # WinDivert packet capture, PriorityQueue scheduler, and telemetry
+├── main.py                # App entry point, UAC admin elevation wrapper, hotkey wiring
+├── engine.py              # WinDivert packet capture, PriorityQueue scheduler, jitter & loss
+├── hotkey_manager.py      # Win32 global hotkey listener (F8 / Ctrl+Shift+L)
+├── config_manager.py      # JSON persistent settings and custom profile storage
 ├── ui/
 │   ├── __init__.py        # UI package initialization
 │   ├── main_window.py     # Master Obsidian Glassmorphic layout & signal bindings
-│   ├── custom_controls.py # Custom Slider with ticks, geometric logo, status dots
-│   ├── pill_switch.py     # Animated Active/Inactive toggle switch
-│   ├── sparkline.py       # Live rolling QPainter sparkline graph
+│   ├── custom_controls.py # Sliders (Latency, Jitter, Loss), geometric logo, status dots
+│   ├── profile_dialog.py  # Profile presets management modal dialog
+│   ├── pill_switch.py     # Animated Active/Inactive toggle switch with pulsing glow
+│   ├── sparkline.py       # Live rolling 60fps QPainter sparkline graph
 │   └── styles.py          # Curated Obsidian Glassmorphic QSS stylesheet & color tokens
-├── requirements.txt       # Dependencies (PySide6, pydivert)
+├── tests/
+│   └── test_lagforge.py   # Test suite for engine math, jitter, packet loss, and UI
+├── requirements.txt       # Dependencies (PySide6, pydivert, pytest)
+├── LagForge.spec          # PyInstaller standalone build specification
 ├── .gitignore             # Python / Windows build ignores
 └── README.md              # Project documentation
 ```
@@ -58,7 +68,7 @@ lagforge/
    cd lagforge
    ```
 
-2. **Create a virtual environment (optional but recommended):**
+2. **Create a virtual environment (optional):**
    ```bash
    python -m venv venv
    .\venv\Scripts\activate
@@ -75,34 +85,14 @@ lagforge/
    ```
    *(A Windows UAC prompt will appear to grant administrator privileges for WinDivert).*
 
-   To run in preview/dry-run mode without UAC elevation:
-   ```bash
-   python main.py --no-elevation
-   ```
-
 ---
 
-## 📐 Architecture & Ping Delay Math
-```
-                      +-----------------------------+
-                      |   LagForge PySide6 GUI      |
-                      |  (Obsidian Glassmorphism)   |
-                      +--------------+--------------+
-                                     |
-                       User adjusts latency (e.g. 325ms)
-                                     v
-                 +---------------------------------------+
-                 |       PacketDelayEngine (engine.py)   |
-                 +---------------------------------------+
-                     /                               \
-                    v                                 v
-   +---------------------------------+   +---------------------------------+
-   | Capture Worker Thread (QThread) |   | Sender Worker Thread (QThread)  |
-   | Reads: WinDivert("!loopback")   |   | Monitors PriorityQueue          |
-   | Delay = Target Ping / 2.0       |   | Pops when release_time <= now   |
-   | Enqueues (release_time, pkt)    |   | Calls w.send(pkt) to re-inject  |
-   +---------------------------------+   +---------------------------------+
-```
+## ⌨️ Hotkeys & Shortcuts
+| Key | Action |
+| :--- | :--- |
+| `F8` | Global Active / Inactive Toggle |
+| `Ctrl+Shift+L` | Global Active / Inactive Toggle |
+| `Profiles ⚙` | Open Custom Presets Manager |
 
 ---
 
