@@ -1,6 +1,7 @@
 """
 LagForge - Core Packet Delay Engine
 Implements real-time packet interception and delay injection using WinDivert.
+Optimized priority queue worker for sub-millisecond precision and low CPU jitter.
 """
 
 import sys
@@ -10,9 +11,8 @@ import logging
 import threading
 from typing import Optional
 
-from PySide6.QtCore import QObject, Signal, QThread
+from PySide6.QtCore import QObject, Signal
 
-# Setup logging
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(threadName)s: %(message)s")
 logger = logging.getLogger("LagForge.Engine")
 
@@ -30,12 +30,10 @@ class PacketDelayEngine(QObject):
     Orchestrates WinDivert packet capture, priority scheduling, and packet reinjection.
     """
 
-    # Signals
     started = Signal()
     stopped = Signal()
     error_occurred = Signal(str)
     telemetry_updated = Signal(int, float, float, float, float)
-    # (total_delayed, packets_per_sec, inbound_ms, outbound_ms, sparkline_point)
 
     def __init__(self, filter_rule: str = "!loopback", parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -72,7 +70,6 @@ class PacketDelayEngine(QObject):
         return self._is_active
 
     def start(self, target_ping_ms: Optional[float] = None):
-        """Starts packet interception and delay injection."""
         if self._is_active:
             return
 
@@ -82,14 +79,12 @@ class PacketDelayEngine(QObject):
         self._stop_event.clear()
         self._is_active = True
 
-        # Clear any stale packets in queue
         while not self._queue.empty():
             try:
                 self._queue.get_nowait()
             except queue.Empty:
                 break
 
-        # Start capture & send threads
         self._capture_thread = threading.Thread(
             target=self._capture_worker, name="LagForge-CaptureWorker", daemon=True
         )
@@ -108,7 +103,6 @@ class PacketDelayEngine(QObject):
         logger.info(f"Engine started. Target ping: {self._target_ping_ms}ms (Filter: {self.filter_rule})")
 
     def stop(self):
-        """Stops interception and cleans up WinDivert handles safely."""
         if not self._is_active:
             return
 
@@ -116,7 +110,6 @@ class PacketDelayEngine(QObject):
         self._is_active = False
         self._stop_event.set()
 
-        # Safely close WinDivert handle to unblock recv()
         if self._divert_handle is not None:
             try:
                 self._divert_handle.close()
@@ -124,10 +117,8 @@ class PacketDelayEngine(QObject):
                 logger.debug(f"Error closing WinDivert handle: {e}")
             self._divert_handle = None
 
-        # Re-inject remaining queued packets immediately so network doesn't drop
         self._flush_queue()
 
-        # Join threads with timeout
         for t in (self._capture_thread, self._sender_thread, self._telemetry_thread):
             if t and t.is_alive():
                 t.join(timeout=0.3)
@@ -136,7 +127,6 @@ class PacketDelayEngine(QObject):
         logger.info("Engine stopped safely.")
 
     def _flush_queue(self):
-        """Flushes remaining queued packets by sending them out or clearing safely."""
         count = 0
         while not self._queue.empty():
             try:
@@ -153,13 +143,11 @@ class PacketDelayEngine(QObject):
             logger.info(f"Flushed {count} lingering packets on shutdown.")
 
     def _capture_worker(self):
-        """Worker thread that captures packets using pydivert."""
         if not HAS_PYDIVERT:
             self._simulate_capture_worker()
             return
 
         try:
-            # Open WinDivert handle
             self._divert_handle = pydivert.WinDivert(filter=self.filter_rule)
             self._divert_handle.open()
         except PermissionError:
@@ -186,14 +174,12 @@ class PacketDelayEngine(QObject):
                     if packet is None:
                         continue
 
-                    # Half-RTT ping math: delay is split equally between inbound and outbound
                     with self._lock:
                         current_ping = self._target_ping_ms
 
                     half_delay_sec = (current_ping / 2.0) / 1000.0
 
                     if half_delay_sec <= 0.0001:
-                        # Immediate pass-through
                         try:
                             self._divert_handle.send(packet)
                         except Exception:
@@ -222,27 +208,27 @@ class PacketDelayEngine(QObject):
                 self._divert_handle = None
 
     def _sender_worker(self):
-        """Worker thread that re-injects delayed packets at exact target times."""
+        """Optimized priority queue worker for sub-millisecond precision with low CPU utilization."""
         while not self._stop_event.is_set():
             try:
-                # Peek at the earliest packet
                 if self._queue.empty():
-                    time.sleep(0.0005)
+                    time.sleep(0.0008)
                     continue
 
-                item = self._queue.get(timeout=0.01)
+                item = self._queue.get(timeout=0.005)
                 release_time, seq, packet = item
 
                 now = time.perf_counter()
-                time_to_wait = release_time - now
+                delay_remaining = release_time - now
 
-                if time_to_wait > 0.001:
-                    # Hybrid sleep + spinwait for sub-millisecond precision
-                    time.sleep(time_to_wait * 0.8)
+                if delay_remaining > 0.002:
+                    time.sleep(delay_remaining - 0.001)
+                    while time.perf_counter() < release_time:
+                        pass
+                elif delay_remaining > 0.0:
                     while time.perf_counter() < release_time:
                         pass
 
-                # Send packet back
                 if not self._stop_event.is_set() and self._divert_handle is not None:
                     try:
                         self._divert_handle.send(packet)
@@ -256,11 +242,8 @@ class PacketDelayEngine(QObject):
                     logger.debug(f"Sender worker exception: {ex}")
 
     def _simulate_capture_worker(self):
-        """Simulation mode fallback if WinDivert driver is not loaded / demo mode."""
-        logger.info("Running in simulation mode for UI demonstration.")
         import random
         while not self._stop_event.is_set():
-            # Simulate bursty network traffic
             sim_burst = random.randint(5, 25)
             with self._lock:
                 self._total_delayed_packets += sim_burst
@@ -268,10 +251,9 @@ class PacketDelayEngine(QObject):
             time.sleep(0.05)
 
     def _telemetry_worker(self):
-        """Publishes real-time telemetry updates for UI and sparkline at 20Hz."""
         last_time = time.perf_counter()
         while not self._stop_event.is_set():
-            time.sleep(0.05)  # 50ms interval (20 FPS)
+            time.sleep(0.05)
             now = time.perf_counter()
             dt = max(0.001, now - last_time)
             last_time = now
@@ -286,7 +268,6 @@ class PacketDelayEngine(QObject):
             half_ms = ping_ms / 2.0
             sparkline_val = pps if self._is_active else 0.0
 
-            # Emit to UI
             self.telemetry_updated.emit(
                 total_cnt,
                 pps,
