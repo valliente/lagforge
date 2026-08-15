@@ -1,8 +1,9 @@
 """
 LagForge - Main Window (v1.101)
-PySide6 Obsidian Dark Glassmorphism Application Interface with live Throughput Readouts.
+PySide6 Obsidian Dark Glassmorphism Application Interface with Profile Presets Support.
 """
 
+from typing import Dict, Any, List
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon, QFont
 from PySide6.QtWidgets import (
@@ -21,6 +22,7 @@ from .styles import MAIN_STYLESHEET, COLORS
 from .sparkline import SparklineWidget
 from .pill_switch import PillSwitch
 from .custom_controls import LagForgeLogo, LatencySliderWidget, SecondarySliderWidget, StatusIndicatorWidget
+from .profile_dialog import ProfileManagerDialog
 from engine import PacketDelayEngine
 
 
@@ -35,6 +37,13 @@ class MainWindow(QMainWindow):
         self.current_ping = 325
         self.current_jitter = 0.0
         self.current_loss = 0.0
+
+        # Saved custom profiles
+        self.saved_profiles: List[Dict[str, Any]] = [
+            {"name": "Competitive Shooter Lag", "ping": 65, "jitter": 15.0, "loss": 1.5},
+            {"name": "Intercontinental Server", "ping": 180, "jitter": 25.0, "loss": 3.0},
+            {"name": "Severe Packet Loss Test", "ping": 250, "jitter": 40.0, "loss": 12.0},
+        ]
 
         # Initialize Packet Delay Engine
         self.engine = PacketDelayEngine(filter_rule="!loopback", parent=self)
@@ -88,6 +97,28 @@ class MainWindow(QMainWindow):
         header_layout.addLayout(title_layout)
 
         header_layout.addStretch()
+
+        # Profile Manager Button
+        self.btn_profiles = QPushButton("Profiles ⚙")
+        self.btn_profiles.setCursor(Qt.PointingHandCursor)
+        self.btn_profiles.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #151824;
+                border: 1px solid {COLORS['card_border']};
+                border-radius: 8px;
+                color: #9CA3AF;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 6px 12px;
+            }}
+            QPushButton:hover {{
+                border: 1px solid {COLORS['accent_cyan']};
+                color: {COLORS['accent_cyan']};
+                background-color: #1A1F30;
+            }}
+        """)
+        self.btn_profiles.clicked.connect(self._open_profile_dialog)
+        header_layout.addWidget(self.btn_profiles)
 
         # Right: Pill Switch
         self.pill_switch = PillSwitch(self)
@@ -333,6 +364,26 @@ class MainWindow(QMainWindow):
         self.engine.error_occurred.connect(self._on_engine_error)
         self.engine.started.connect(lambda: self.status_dots.set_active(True))
         self.engine.stopped.connect(lambda: self.status_dots.set_active(False))
+
+    def _open_profile_dialog(self):
+        current_cfg = {
+            "ping": self.current_ping,
+            "jitter": self.current_jitter,
+            "loss": self.current_loss,
+        }
+        dlg = ProfileManagerDialog(current_cfg, self.saved_profiles, self)
+        dlg.profile_selected.connect(self._apply_profile)
+        if dlg.exec():
+            self.saved_profiles = dlg.profiles
+
+    def _apply_profile(self, profile: dict):
+        ping = profile.get("ping", 325)
+        jitter = profile.get("jitter", 0.0)
+        loss = profile.get("loss", 0.0)
+
+        self.slider.setValue(ping)
+        self.jitter_slider.setValue(jitter)
+        self.loss_slider.setValue(loss)
 
     def _on_slider_changed(self, val: int):
         self.current_ping = val
