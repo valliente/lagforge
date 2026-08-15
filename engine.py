@@ -1,6 +1,6 @@
 """
 LagForge - Core Packet Delay Engine
-Implements real-time packet interception, Gaussian jitter, and delay injection using WinDivert.
+Implements real-time packet interception, Gaussian jitter, packet drop probability, and delay injection using WinDivert.
 """
 
 import sys
@@ -27,19 +27,21 @@ except ImportError:
 class PacketDelayEngine(QObject):
     """
     Main controller for the network latency engine.
-    Supports fixed latency and Gaussian jitter perturbation.
+    Supports fixed latency, Gaussian jitter, and packet drop simulation.
     """
 
     started = Signal()
     stopped = Signal()
     error_occurred = Signal(str)
-    telemetry_updated = Signal(int, float, float, float, float)
+    telemetry_updated = Signal(int, int, float, float, float, float)
+    # (total_delayed, total_dropped, pps, inbound_ms, outbound_ms, sparkline_point)
 
     def __init__(self, filter_rule: str = "!loopback", parent: Optional[QObject] = None):
         super().__init__(parent)
         self.filter_rule = filter_rule
         self._target_ping_ms: float = 325.0
         self._jitter_ms: float = 0.0
+        self._packet_loss_pct: float = 0.0
         self._is_active: bool = False
 
         self._queue: queue.PriorityQueue = queue.PriorityQueue()
@@ -52,7 +54,9 @@ class PacketDelayEngine(QObject):
         self._seq_counter = 0
 
         self._total_delayed_packets: int = 0
+        self._total_dropped_packets: int = 0
         self._recent_delayed_packets: int = 0
+        self._recent_dropped_packets: int = 0
         self._lock = threading.Lock()
 
     @property
@@ -74,6 +78,15 @@ class PacketDelayEngine(QObject):
             self._jitter_ms = max(0.0, min(100.0, float(val)))
 
     @property
+    def packet_loss_pct(self) -> float:
+        return self._packet_loss_pct
+
+    @packet_loss_pct.setter
+    def packet_loss_pct(self, val: float):
+        with self._lock:
+            self._packet_loss_pct = max(0.0, min(25.0, float(val)))
+
+    @property
     def is_active(self) -> bool:
         return self._is_active
 
@@ -86,14 +99,21 @@ class PacketDelayEngine(QObject):
         if jitter <= 0.001:
             return base_ping
 
-        # Gaussian perturbation scaled by jitter standard deviation
         sigma = jitter / 2.0
         noise = random.gauss(0, sigma)
-        # Clamp perturbation to [-jitter, +jitter]
         bounded_noise = max(-jitter, min(jitter, noise))
         return max(0.0, base_ping + bounded_noise)
 
-    def start(self, target_ping_ms: Optional[float] = None, jitter_ms: Optional[float] = None):
+    def should_drop_packet(self) -> bool:
+        """Evaluates whether current packet should be dropped based on loss percentage."""
+        with self._lock:
+            loss_pct = self._packet_loss_pct
+
+        if loss_pct <= 0.001:
+            return False
+        return (random.random() * 100.0) < loss_pct
+
+    def start(self, target_ping_ms: Optional[float] = None, jitter_ms: Optional[float] = None, packet_loss_pct: Optional[float] = None):
         if self._is_active:
             return
 
@@ -101,6 +121,8 @@ class PacketDelayEngine(QObject):
             self.target_ping_ms = target_ping_ms
         if jitter_ms is not None:
             self.jitter_ms = jitter_ms
+        if packet_loss_pct is not None:
+            self.packet_loss_pct = packet_loss_pct
 
         self._stop_event.clear()
         self._is_active = True
@@ -126,7 +148,7 @@ class PacketDelayEngine(QObject):
         self._telemetry_thread.start()
 
         self.started.emit()
-        logger.info(f"Engine started. Target ping: {self._target_ping_ms}ms ±{self._jitter_ms}ms (Filter: {self.filter_rule})")
+        logger.info(f"Engine started. Target ping: {self._target_ping_ms}ms ±{self._jitter_ms}ms (Loss: {self._packet_loss_pct}%)")
 
     def stop(self):
         if not self._is_active:
@@ -200,6 +222,14 @@ class PacketDelayEngine(QObject):
                     if packet is None:
                         continue
 
+                    # Check for simulated packet loss
+                    if self.should_drop_packet():
+                        with self._lock:
+                            self._total_dropped_packets += 1
+                            self._recent_dropped_packets += 1
+                        # Dropped: simply do not enqueue or re-inject
+                        continue
+
                     # Calculate effective ping with jitter
                     effective_ping = self.calculate_effective_latency_ms()
                     half_delay_sec = (effective_ping / 2.0) / 1000.0
@@ -268,9 +298,12 @@ class PacketDelayEngine(QObject):
     def _simulate_capture_worker(self):
         while not self._stop_event.is_set():
             sim_burst = random.randint(5, 25)
+            sim_drop = 1 if self.should_drop_packet() else 0
             with self._lock:
                 self._total_delayed_packets += sim_burst
                 self._recent_delayed_packets += sim_burst
+                self._total_dropped_packets += sim_drop
+                self._recent_dropped_packets += sim_drop
             time.sleep(0.05)
 
     def _telemetry_worker(self):
@@ -283,6 +316,7 @@ class PacketDelayEngine(QObject):
 
             with self._lock:
                 total_cnt = self._total_delayed_packets
+                dropped_cnt = self._total_dropped_packets
                 recent_cnt = self._recent_delayed_packets
                 self._recent_delayed_packets = 0
                 ping_ms = self._target_ping_ms
@@ -293,6 +327,7 @@ class PacketDelayEngine(QObject):
 
             self.telemetry_updated.emit(
                 total_cnt,
+                dropped_cnt,
                 pps,
                 half_ms,
                 half_ms,
