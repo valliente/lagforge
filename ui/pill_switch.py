@@ -1,9 +1,9 @@
 """
-LagForge - Obsidian Pill Toggle Switch
-Capsule switch with glowing Active/Inactive states.
+LagForge - Obsidian Pill Toggle Switch (v1.101)
+Capsule switch with glowing Active/Inactive states and animated pulsing neon.
 """
 
-from PySide6.QtCore import Qt, Signal, QRectF, Property, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, Signal, QRectF, Property, QPropertyAnimation, QEasingCurve, QTimer
 from PySide6.QtGui import QPainter, QColor, QFont, QBrush, QPen, QPainterPath
 from PySide6.QtWidgets import QWidget
 
@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QWidget
 class PillSwitch(QWidget):
     """
     Pill-shaped toggle button with 'ACTIVE' (Emerald Glow) and 'INACTIVE' (Muted) states.
+    Features pulsing glow animation when active.
     """
 
     toggled = Signal(bool)
@@ -18,7 +19,9 @@ class PillSwitch(QWidget):
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
         self._is_active = False
-        self._pill_pos = 1.0  # 0.0 for ACTIVE (left), 1.0 for INACTIVE (right)
+        self._pill_pos = 1.0
+        self._pulse_val = 1.0
+        self._pulse_direction = -1
 
         self.setFixedSize(160, 36)
         self.setCursor(Qt.PointingHandCursor)
@@ -27,6 +30,11 @@ class PillSwitch(QWidget):
         self._anim = QPropertyAnimation(self, b"pill_pos", self)
         self._anim.setDuration(180)
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        # Pulsing timer
+        self._pulse_timer = QTimer(self)
+        self._pulse_timer.setInterval(40)  # 25 FPS pulse
+        self._pulse_timer.timeout.connect(self._on_pulse_step)
 
     def get_pill_pos(self) -> float:
         return self._pill_pos
@@ -41,11 +49,35 @@ class PillSwitch(QWidget):
     def is_active(self) -> bool:
         return self._is_active
 
+    def _on_pulse_step(self):
+        if not self._is_active:
+            self._pulse_timer.stop()
+            self._pulse_val = 1.0
+            self.update()
+            return
+
+        self._pulse_val += self._pulse_direction * 0.04
+        if self._pulse_val <= 0.4:
+            self._pulse_val = 0.4
+            self._pulse_direction = 1
+        elif self._pulse_val >= 1.0:
+            self._pulse_val = 1.0
+            self._pulse_direction = -1
+
+        self.update()
+
     def set_active(self, active: bool, animate: bool = True):
         if self._is_active == active:
             return
         self._is_active = active
         target = 0.0 if active else 1.0
+
+        if active:
+            self._pulse_direction = -1
+            self._pulse_timer.start()
+        else:
+            self._pulse_timer.stop()
+            self._pulse_val = 1.0
 
         if animate:
             self._anim.stop()
@@ -87,7 +119,6 @@ class PillSwitch(QWidget):
         thumb_h = h - (thumb_pad * 2.0)
         thumb_radius = thumb_h / 2.0
 
-        # Calculate thumb X position based on interpolation
         x_left = thumb_pad
         x_right = (w / 2.0)
         thumb_x = x_left + (x_right - x_left) * self._pill_pos
@@ -97,38 +128,32 @@ class PillSwitch(QWidget):
         thumb_path.addRoundedRect(thumb_rect, thumb_radius, thumb_radius)
 
         if self._pill_pos < 0.5:
-            # Active (Emerald Green glow)
-            # Outer glow
+            # Active (Emerald Green with pulsing glow)
+            glow_alpha = int(70 * self._pulse_val)
             glow_rect = thumb_rect.adjusted(-2, -2, 2, 2)
             glow_path = QPainterPath()
             glow_path.addRoundedRect(glow_rect, thumb_radius + 2, thumb_radius + 2)
-            painter.fillPath(glow_path, QBrush(QColor(16, 185, 129, 60)))
+            painter.fillPath(glow_path, QBrush(QColor(16, 185, 129, glow_alpha)))
 
-            # Pill body
             painter.fillPath(thumb_path, QBrush(QColor("#10B981")))
         else:
-            # Inactive (Muted Slate highlight)
             painter.fillPath(thumb_path, QBrush(QColor("#212638")))
 
-        # Draw Text Labels
+        # Labels
         font = QFont("Segoe UI", 9, QFont.Bold)
         painter.setFont(font)
 
         left_rect = QRectF(0, 0, w / 2.0, h)
         right_rect = QRectF(w / 2.0, 0, w / 2.0, h)
 
-        # "ACTIVE" text color
         if self._is_active:
-            painter.setPen(QColor("#031F14"))  # Dark contrast against bright emerald
+            painter.setPen(QColor("#031F14"))
         else:
-            painter.setPen(QColor("#4B5563"))  # Muted
-
+            painter.setPen(QColor("#4B5563"))
         painter.drawText(left_rect, Qt.AlignCenter, "ACTIVE")
 
-        # "INACTIVE" text color
         if not self._is_active:
-            painter.setPen(QColor("#9CA3AF"))  # Crisp Cool Gray
+            painter.setPen(QColor("#9CA3AF"))
         else:
-            painter.setPen(QColor("#374151"))  # Muted
-
+            painter.setPen(QColor("#374151"))
         painter.drawText(right_rect, Qt.AlignCenter, "INACTIVE")
