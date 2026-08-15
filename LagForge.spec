@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec file for LagForge
-Includes UAC admin manifest embedding and pydivert WinDivert binaries.
+PyInstaller spec file for LagForge v1.101
+Includes UAC admin manifest embedding, WinDivert driver binaries, and hotkey modules.
 """
 
 import os
@@ -10,12 +10,12 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, co
 
 block_cipher = None
 
-# Collect all pydivert assets and submodules
+# Collect pydivert assets and submodules
 pydivert_datas = collect_data_files('pydivert')
 pydivert_binaries = collect_dynamic_libs('pydivert')
 pydivert_hiddenimports = collect_submodules('pydivert')
 
-# Explicitly ensure WinDivert binaries are included
+# Explicitly ensure WinDivert binaries are bundled
 import pydivert
 pydivert_path = os.path.dirname(pydivert.__file__)
 dll_dir = os.path.join(pydivert_path, 'windivert_dll')
@@ -44,6 +44,9 @@ all_hiddenimports = list(set(
         'pydivert.windivert',
         'pydivert.windivert_dll',
         'pydivert.windivert_dll.structs',
+        'hotkey_manager',
+        'config_manager',
+        'ui.profile_dialog',
     ]
 ))
 
@@ -56,7 +59,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tkinter', 'matplotlib', 'scipy', 'numpy', 'torch'],
+    excludes=['tkinter', 'matplotlib', 'scipy', 'numpy', 'torch', 'IPython'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
