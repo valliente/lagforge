@@ -1,6 +1,6 @@
 """
-LagForge - Custom UI Controls
-Custom widgets for Slider with Ticks, Geometric Logo, and Status Indicator.
+LagForge - Custom UI Controls (v1.101)
+Custom widgets for Sliders (Latency, Jitter, Packet Loss), Geometric Logo, and Status Indicators.
 """
 
 from PySide6.QtCore import Qt, Signal, QRectF, QPointF
@@ -13,7 +13,7 @@ from PySide6.QtGui import (
     QBrush,
     QFont,
 )
-from PySide6.QtWidgets import QWidget, QSlider
+from PySide6.QtWidgets import QWidget
 
 
 class LagForgeLogo(QWidget):
@@ -94,7 +94,7 @@ class LatencySliderWidget(QWidget):
         self._value = initial_val
         self._is_dragging = False
 
-        self.setMinimumHeight(70)
+        self.setMinimumHeight(64)
         self.setCursor(Qt.PointingHandCursor)
 
     @property
@@ -122,7 +122,7 @@ class LatencySliderWidget(QWidget):
             self._is_dragging = False
 
     def _update_from_mouse(self, mouse_x: float):
-        track_pad = 24.0
+        track_pad = 20.0
         track_w = self.width() - (track_pad * 2.0)
         if track_w <= 0:
             return
@@ -137,10 +137,8 @@ class LatencySliderWidget(QWidget):
         painter.setRenderHint(QPainter.TextAntialiasing, True)
 
         w = float(self.width())
-        h = float(self.height())
-
-        track_pad = 24.0
-        track_y = 26.0
+        track_pad = 20.0
+        track_y = 22.0
         track_h = 4.0
         track_w = w - (track_pad * 2.0)
 
@@ -150,56 +148,46 @@ class LatencySliderWidget(QWidget):
         ratio = (self._value - self.min_val) / float(self.max_val - self.min_val)
         handle_x = track_pad + (ratio * track_w)
 
-        # 1. Base track (Dark Slate)
+        # Base track
         base_track = QRectF(track_pad, track_y, track_w, track_h)
         base_path = QPainterPath()
         base_path.addRoundedRect(base_track, track_h / 2.0, track_h / 2.0)
         painter.fillPath(base_path, QBrush(QColor("#1A2030")))
 
-        # 2. Active fill track (Cyan Gradient with slight glow)
+        # Active track fill
         if ratio > 0.001:
             active_w = handle_x - track_pad
             active_track = QRectF(track_pad, track_y, active_w, track_h)
             active_path = QPainterPath()
             active_path.addRoundedRect(active_track, track_h / 2.0, track_h / 2.0)
 
-            # Active glow
-            glow_pen = QPen(QColor(0, 240, 255, 100), 8.0, Qt.SolidLine, Qt.RoundCap)
+            # Glow
+            glow_pen = QPen(QColor(0, 240, 255, 90), 6.0, Qt.SolidLine, Qt.RoundCap)
             painter.setPen(glow_pen)
             painter.drawLine(QPointF(track_pad, track_y + track_h / 2.0), QPointF(handle_x, track_y + track_h / 2.0))
 
-            # Active line
             fill_grad = QLinearGradient(track_pad, 0, handle_x, 0)
             fill_grad.setColorAt(0.0, QColor("#00B4D8"))
             fill_grad.setColorAt(1.0, QColor("#00F0FF"))
             painter.fillPath(active_path, QBrush(fill_grad))
 
-        # 3. Tick Marks (11 ticks for 0ms, 100ms, ..., 1000ms)
+        # Tick Marks (11 ticks)
         num_ticks = 11
         for i in range(num_ticks):
             tx = track_pad + (i / (num_ticks - 1)) * track_w
-            tick_top = track_y - 7.0
-            tick_bottom = track_y + 11.0
-
-            # Tick line
-            if tx <= handle_x:
-                tick_color = QColor("#00C8E6")
-            else:
-                tick_color = QColor("#2A334B")
-
-            painter.setPen(QPen(tick_color, 1.5))
+            tick_top = track_y - 6.0
+            tick_bottom = track_y + 10.0
+            tick_color = QColor("#00C8E6") if tx <= handle_x else QColor("#2A334B")
+            painter.setPen(QPen(tick_color, 1.2))
             painter.drawLine(QPointF(tx, tick_top), QPointF(tx, tick_bottom))
 
-        # 4. Handle (Electric Cyan with Glow & White Core)
-        # Outer glow
-        glow_radius = 14.0
-        glow_grad = QLinearGradient(handle_x - glow_radius, track_y, handle_x + glow_radius, track_y)
+        # Handle with Glow
+        glow_radius = 12.0
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(QColor(0, 240, 255, 70)))
+        painter.setBrush(QBrush(QColor(0, 240, 255, 60)))
         painter.drawEllipse(QPointF(handle_x, track_y + track_h / 2.0), glow_radius, glow_radius)
 
-        # Handle Circle Body
-        handle_radius = 9.0
+        handle_radius = 8.0
         handle_grad = QLinearGradient(handle_x, track_y - handle_radius, handle_x, track_y + handle_radius)
         handle_grad.setColorAt(0.0, QColor("#55FFFF"))
         handle_grad.setColorAt(1.0, QColor("#00D2E0"))
@@ -208,29 +196,147 @@ class LatencySliderWidget(QWidget):
         painter.setPen(QPen(QColor("#FFFFFF"), 2.0))
         painter.drawEllipse(QPointF(handle_x, track_y + track_h / 2.0), handle_radius, handle_radius)
 
-        # 5. Min / Max Text Labels
-        font = QFont("Segoe UI", 9, QFont.Medium)
+        # Labels
+        font = QFont("Segoe UI", 8, QFont.Medium)
         painter.setFont(font)
         painter.setPen(QColor("#6B7280"))
+        label_y = track_y + 20.0
+        painter.drawText(QRectF(track_pad - 10, label_y, 50, 16), Qt.AlignLeft, f"{self.min_val}ms")
+        painter.drawText(QRectF(w - track_pad - 50 + 10, label_y, 50, 16), Qt.AlignRight, f"{self.max_val}ms")
 
-        label_y = track_y + 24.0
-        painter.drawText(QRectF(track_pad - 10, label_y, 60, 20), Qt.AlignLeft, f"{self.min_val}ms")
-        painter.drawText(QRectF(w - track_pad - 60 + 10, label_y, 60, 20), Qt.AlignRight, f"{self.max_val}ms")
+
+class SecondarySliderWidget(QWidget):
+    """
+    Compact secondary slider for Jitter and Packet Loss control.
+    """
+
+    valueChanged = Signal(float)
+
+    def __init__(
+        self,
+        label: str,
+        min_val: float = 0.0,
+        max_val: float = 100.0,
+        initial_val: float = 0.0,
+        unit: str = "ms",
+        accent_hex: str = "#00F0FF",
+        parent: QWidget = None
+    ):
+        super().__init__(parent)
+        self.label_text = label
+        self.min_val = min_val
+        self.max_val = max_val
+        self._value = initial_val
+        self.unit = unit
+        self.accent_color = QColor(accent_hex)
+        self._is_dragging = False
+
+        self.setMinimumHeight(48)
+        self.setCursor(Qt.PointingHandCursor)
+
+    @property
+    def value(self) -> float:
+        return self._value
+
+    def setValue(self, val: float):
+        clamped = max(self.min_val, min(self.max_val, float(val)))
+        if abs(clamped - self._value) > 0.01:
+            self._value = clamped
+            self.update()
+            self.valueChanged.emit(self._value)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._is_dragging = True
+            self._update_from_mouse(event.position().x())
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging:
+            self._update_from_mouse(event.position().x())
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._is_dragging = False
+
+    def _update_from_mouse(self, mouse_x: float):
+        track_pad = 12.0
+        track_w = self.width() - (track_pad * 2.0)
+        if track_w <= 0:
+            return
+        ratio = (mouse_x - track_pad) / track_w
+        ratio = max(0.0, min(1.0, ratio))
+        new_val = self.min_val + ratio * (self.max_val - self.min_val)
+        self.setValue(new_val)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+
+        w = float(self.width())
+        track_pad = 12.0
+        track_y = 30.0
+        track_h = 3.5
+        track_w = w - (track_pad * 2.0)
+
+        # Header Text: Label and Value Readout
+        font_lbl = QFont("Segoe UI", 8, QFont.Bold)
+        painter.setFont(font_lbl)
+        painter.setPen(QColor("#9CA3AF"))
+        painter.drawText(QRectF(track_pad, 4, 120, 16), Qt.AlignLeft, self.label_text.upper())
+
+        font_val = QFont("Segoe UI", 9, QFont.Bold)
+        painter.setFont(font_val)
+        painter.setPen(self.accent_color)
+        val_str = f"±{int(self._value)}{self.unit}" if "±" in self.unit or self.label_text.lower() == "jitter" else f"{int(self._value)}{self.unit}"
+        painter.drawText(QRectF(w - track_pad - 80, 4, 80, 16), Qt.AlignRight, val_str)
+
+        if track_w <= 0:
+            return
+
+        ratio = (self._value - self.min_val) / float(self.max_val - self.min_val)
+        handle_x = track_pad + (ratio * track_w)
+
+        # Base track
+        base_track = QRectF(track_pad, track_y, track_w, track_h)
+        base_path = QPainterPath()
+        base_path.addRoundedRect(base_track, track_h / 2.0, track_h / 2.0)
+        painter.fillPath(base_path, QBrush(QColor("#1A2030")))
+
+        # Active track fill
+        if ratio > 0.001:
+            active_w = handle_x - track_pad
+            active_track = QRectF(track_pad, track_y, active_w, track_h)
+            active_path = QPainterPath()
+            active_path.addRoundedRect(active_track, track_h / 2.0, track_h / 2.0)
+            painter.fillPath(active_path, QBrush(self.accent_color))
+
+        # Handle
+        handle_radius = 6.0
+        painter.setBrush(QBrush(self.accent_color))
+        painter.setPen(QPen(QColor("#FFFFFF"), 1.5))
+        painter.drawEllipse(QPointF(handle_x, track_y + track_h / 2.0), handle_radius, handle_radius)
 
 
 class StatusIndicatorWidget(QWidget):
     """
-    Renders the 3 glowing emerald status dots.
+    Renders the 3 glowing emerald status dots with animation support.
     """
 
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
         self.setFixedSize(36, 16)
         self._active = False
+        self._pulse_alpha = 1.0
 
     def set_active(self, active: bool):
         self._active = active
         self.update()
+
+    def set_pulse_alpha(self, alpha: float):
+        self._pulse_alpha = alpha
+        if self._active:
+            self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -245,9 +351,9 @@ class StatusIndicatorWidget(QWidget):
         for i, (cx, cy, r) in enumerate(dots):
             if self._active:
                 if i == 2:
-                    # Pulsing / Glowing main dot
+                    glow_a = int(90 * self._pulse_alpha)
                     painter.setPen(Qt.NoPen)
-                    painter.setBrush(QBrush(QColor(16, 185, 129, 90)))
+                    painter.setBrush(QBrush(QColor(16, 185, 129, glow_a)))
                     painter.drawEllipse(QPointF(cx, cy), r + 2.5, r + 2.5)
 
                     painter.setBrush(QBrush(QColor("#10B981")))
