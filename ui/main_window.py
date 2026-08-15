@@ -1,11 +1,11 @@
 """
 LagForge - Main Window (v1.101)
-PySide6 Obsidian Dark Glassmorphism Application Interface with Profile Presets Support.
+PySide6 Obsidian Dark Glassmorphism Application Interface with System Tray & Hotkey Support.
 """
 
 from typing import Dict, Any, List
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QIcon, QFont
+from PySide6.QtGui import QIcon, QFont, QAction, QPixmap, QPainter, QColor
 from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QFrame,
     QButtonGroup,
     QMessageBox,
+    QSystemTrayIcon,
+    QMenu,
 )
 
 from .styles import MAIN_STYLESHEET, COLORS
@@ -29,6 +31,7 @@ from engine import PacketDelayEngine
 class MainWindow(QMainWindow):
     """
     Main Application Window for LagForge.
+    Includes System Tray quick presets and global hotkey integration.
     """
 
     def __init__(self, is_admin: bool = True):
@@ -50,6 +53,7 @@ class MainWindow(QMainWindow):
 
         self._setup_window()
         self._init_ui()
+        self._setup_tray_icon()
         self._connect_signals()
 
         # Update initial display values
@@ -77,7 +81,6 @@ class MainWindow(QMainWindow):
         header_layout = QHBoxLayout()
         header_layout.setSpacing(14)
 
-        # Logo and Titles
         self.logo_widget = LagForgeLogo(38, self)
         header_layout.addWidget(self.logo_widget)
 
@@ -120,7 +123,7 @@ class MainWindow(QMainWindow):
         self.btn_profiles.clicked.connect(self._open_profile_dialog)
         header_layout.addWidget(self.btn_profiles)
 
-        # Right: Pill Switch
+        # Pill Switch
         self.pill_switch = PillSwitch(self)
         header_layout.addWidget(self.pill_switch)
 
@@ -188,11 +191,9 @@ class MainWindow(QMainWindow):
         control_layout.setContentsMargins(20, 18, 20, 16)
         control_layout.setSpacing(12)
 
-        # Main Slider Widget with ticks
         self.slider = LatencySliderWidget(min_val=0, max_val=1000, initial_val=self.current_ping, parent=self)
         control_layout.addWidget(self.slider)
 
-        # Large Readout display
         readout_layout = QVBoxLayout()
         readout_layout.setSpacing(2)
         readout_layout.setAlignment(Qt.AlignCenter)
@@ -209,7 +210,6 @@ class MainWindow(QMainWindow):
         readout_layout.addWidget(self.lbl_ping_sub)
         control_layout.addLayout(readout_layout)
 
-        # Secondary Modifiers: Jitter & Packet Loss Sliders
         modifiers_layout = QHBoxLayout()
         modifiers_layout.setSpacing(14)
 
@@ -340,7 +340,7 @@ class MainWindow(QMainWindow):
         self.status_dots = StatusIndicatorWidget(self)
         footer_layout.addWidget(self.status_dots)
 
-        self.lbl_rule = QLabel("Rule: !loopback connection.")
+        self.lbl_rule = QLabel("Rule: !loopback connection.  [Hotkey: F8]")
         self.lbl_rule.setStyleSheet("font-family: 'Consolas', monospace; font-size: 12px; color: #9CA3AF;")
         footer_layout.addWidget(self.lbl_rule)
 
@@ -353,6 +353,57 @@ class MainWindow(QMainWindow):
 
         root_layout.addLayout(footer_layout)
 
+    def _setup_tray_icon(self):
+        pixmap = QPixmap(32, 32)
+        pixmap.fill(Qt.transparent)
+        p = QPainter(pixmap)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(QColor("#00F0FF"))
+        p.setPen(Qt.NoPen)
+        p.drawRoundedRect(4, 4, 24, 24, 6, 6)
+        p.end()
+        icon = QIcon(pixmap)
+
+        self.tray_icon = QSystemTrayIcon(icon, self)
+        self.tray_icon.setToolTip("LagForge - Latency Control")
+
+        tray_menu = QMenu()
+        tray_menu.setStyleSheet("""
+            QMenu {
+                background-color: #13151E;
+                border: 1px solid #212638;
+                color: #FFFFFF;
+                padding: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #1A1F30;
+                color: #00F0FF;
+            }
+        """)
+
+        act_toggle = QAction("Toggle Active (F8)", self)
+        act_toggle.triggered.connect(self.toggle_active_state)
+        tray_menu.addAction(act_toggle)
+
+        tray_menu.addSeparator()
+
+        for ms in (50, 100, 200, 500):
+            act_preset = QAction(f"Set +{ms}ms", self)
+            act_preset.triggered.connect(lambda checked, v=ms: self.slider.setValue(v))
+            tray_menu.addAction(act_preset)
+
+        tray_menu.addSeparator()
+        act_show = QAction("Show Window", self)
+        act_show.triggered.connect(self.showNormal)
+        tray_menu.addAction(act_show)
+
+        act_exit = QAction("Exit", self)
+        act_exit.triggered.connect(self.close)
+        tray_menu.addAction(act_exit)
+
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.show()
+
     def _connect_signals(self):
         self.slider.valueChanged.connect(self._on_slider_changed)
         self.jitter_slider.valueChanged.connect(self._on_jitter_changed)
@@ -364,6 +415,10 @@ class MainWindow(QMainWindow):
         self.engine.error_occurred.connect(self._on_engine_error)
         self.engine.started.connect(lambda: self.status_dots.set_active(True))
         self.engine.stopped.connect(lambda: self.status_dots.set_active(False))
+
+    def toggle_active_state(self):
+        """Toggles active state (callable via global hotkey or tray)."""
+        self.pill_switch.set_active(not self.pill_switch.is_active)
 
     def _open_profile_dialog(self):
         current_cfg = {
