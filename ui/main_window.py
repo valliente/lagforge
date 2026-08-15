@@ -1,6 +1,6 @@
 """
 LagForge - Main Window (v1.101)
-PySide6 Obsidian Dark Glassmorphism Application Interface.
+PySide6 Obsidian Dark Glassmorphism Application Interface with live Throughput Readouts.
 """
 
 from PySide6.QtCore import Qt, QTimer
@@ -49,8 +49,8 @@ class MainWindow(QMainWindow):
     def _setup_window(self):
         self.setObjectName("MainWindow")
         self.setWindowTitle("LagForge - Global Latency Control")
-        self.resize(920, 520)
-        self.setMinimumSize(860, 480)
+        self.resize(940, 530)
+        self.setMinimumSize(880, 490)
         self.setStyleSheet(MAIN_STYLESHEET)
 
     def _init_ui(self):
@@ -197,7 +197,7 @@ class MainWindow(QMainWindow):
 
         # --- RIGHT PANEL: TELEMETRY STACK ---
         telemetry_container = QVBoxLayout()
-        telemetry_container.setSpacing(10)
+        telemetry_container.setSpacing(8)
 
         # 1. Delayed & Dropped Packets Card
         pkt_card = QFrame()
@@ -205,27 +205,25 @@ class MainWindow(QMainWindow):
             f"background-color: {COLORS['card_bg']}; border: 1px solid {COLORS['card_border']}; border-radius: 12px;"
         )
         pkt_layout = QHBoxLayout(pkt_card)
-        pkt_layout.setContentsMargins(14, 10, 14, 10)
+        pkt_layout.setContentsMargins(14, 8, 14, 8)
         pkt_layout.setSpacing(10)
 
-        # Delayed Packets
         del_box = QVBoxLayout()
         del_box.setSpacing(2)
         lbl_pkt_title = QLabel("Packets Delayed")
-        lbl_pkt_title.setStyleSheet("font-size: 11px; font-weight: 600; color: #9CA3AF; text-transform: uppercase;")
+        lbl_pkt_title.setStyleSheet("font-size: 10px; font-weight: 600; color: #9CA3AF; text-transform: uppercase;")
         self.lbl_pkt_count = QLabel("0")
-        self.lbl_pkt_count.setStyleSheet("font-size: 20px; font-weight: 800; color: #FFFFFF;")
+        self.lbl_pkt_count.setStyleSheet("font-size: 18px; font-weight: 800; color: #FFFFFF;")
         del_box.addWidget(lbl_pkt_title)
         del_box.addWidget(self.lbl_pkt_count)
         pkt_layout.addLayout(del_box)
 
-        # Dropped Packets
         drop_box = QVBoxLayout()
         drop_box.setSpacing(2)
         lbl_drop_title = QLabel("Dropped")
-        lbl_drop_title.setStyleSheet("font-size: 11px; font-weight: 600; color: #F43F5E; text-transform: uppercase;")
+        lbl_drop_title.setStyleSheet("font-size: 10px; font-weight: 600; color: #F43F5E; text-transform: uppercase;")
         self.lbl_drop_count = QLabel("0")
-        self.lbl_drop_count.setStyleSheet("font-size: 20px; font-weight: 800; color: #F43F5E;")
+        self.lbl_drop_count.setStyleSheet("font-size: 18px; font-weight: 800; color: #F43F5E;")
         drop_box.addWidget(lbl_drop_title)
         drop_box.addWidget(self.lbl_drop_count)
         pkt_layout.addLayout(drop_box)
@@ -243,21 +241,40 @@ class MainWindow(QMainWindow):
         spark_layout.addWidget(self.sparkline)
         telemetry_container.addWidget(spark_card)
 
-        # 3. Split Inbound / Outbound Readout Card
+        # 3. Throughput Card (KB/s In & Out)
+        tp_card = QFrame()
+        tp_card.setStyleSheet(
+            f"background-color: {COLORS['card_bg']}; border: 1px solid {COLORS['card_border']}; border-radius: 12px;"
+        )
+        tp_layout = QHBoxLayout(tp_card)
+        tp_layout.setContentsMargins(12, 6, 12, 6)
+        tp_layout.setSpacing(8)
+
+        self.lbl_tp_in = QLabel("▼ 0.0 KB/s")
+        self.lbl_tp_in.setStyleSheet("font-size: 12px; font-weight: 700; color: #00F0FF;")
+        self.lbl_tp_out = QLabel("▲ 0.0 KB/s")
+        self.lbl_tp_out.setStyleSheet("font-size: 12px; font-weight: 700; color: #10B981;")
+
+        tp_layout.addWidget(self.lbl_tp_in)
+        tp_layout.addStretch()
+        tp_layout.addWidget(self.lbl_tp_out)
+        telemetry_container.addWidget(tp_card)
+
+        # 4. Split Inbound / Outbound Latency Readout Card
         split_card = QFrame()
         split_card.setStyleSheet(
             f"background-color: {COLORS['card_bg']}; border: 1px solid {COLORS['card_border']}; border-radius: 12px;"
         )
         split_layout = QHBoxLayout(split_card)
-        split_layout.setContentsMargins(14, 10, 14, 10)
+        split_layout.setContentsMargins(14, 8, 14, 8)
         split_layout.setSpacing(10)
 
         in_layout = QVBoxLayout()
-        in_layout.setSpacing(2)
+        in_layout.setSpacing(1)
         lbl_in_title = QLabel("Inbound:")
-        lbl_in_title.setStyleSheet("font-size: 11px; font-weight: 500; color: #9CA3AF;")
+        lbl_in_title.setStyleSheet("font-size: 10px; font-weight: 500; color: #9CA3AF;")
         self.lbl_in_val = QLabel("162.5ms")
-        self.lbl_in_val.setStyleSheet("font-size: 14px; font-weight: 700; color: #FFFFFF;")
+        self.lbl_in_val.setStyleSheet("font-size: 13px; font-weight: 700; color: #FFFFFF;")
         in_layout.addWidget(lbl_in_title)
         in_layout.addWidget(self.lbl_in_val)
         split_layout.addLayout(in_layout)
@@ -268,11 +285,11 @@ class MainWindow(QMainWindow):
         split_layout.addWidget(v_divider)
 
         out_layout = QVBoxLayout()
-        out_layout.setSpacing(2)
+        out_layout.setSpacing(1)
         lbl_out_title = QLabel("Outbound:")
-        lbl_out_title.setStyleSheet("font-size: 11px; font-weight: 500; color: #9CA3AF;")
+        lbl_out_title.setStyleSheet("font-size: 10px; font-weight: 500; color: #9CA3AF;")
         self.lbl_out_val = QLabel("162.5ms")
-        self.lbl_out_val.setStyleSheet("font-size: 14px; font-weight: 700; color: #FFFFFF;")
+        self.lbl_out_val.setStyleSheet("font-size: 13px; font-weight: 700; color: #FFFFFF;")
         out_layout.addWidget(lbl_out_title)
         out_layout.addWidget(self.lbl_out_val)
         split_layout.addLayout(out_layout)
@@ -355,6 +372,8 @@ class MainWindow(QMainWindow):
             self.engine.stop()
             self.status_dots.set_active(False)
             self.sparkline.reset()
+            self.lbl_tp_in.setText("▼ 0.0 KB/s")
+            self.lbl_tp_out.setText("▲ 0.0 KB/s")
 
     def _on_telemetry_received(
         self, total: int, dropped: int, pps: float, in_ms: float, out_ms: float, kb_in: float, kb_out: float, spark_val: float
@@ -364,6 +383,8 @@ class MainWindow(QMainWindow):
         self.sparkline.add_data_point(spark_val)
         self.lbl_in_val.setText(f"{in_ms:.1f}ms")
         self.lbl_out_val.setText(f"{out_ms:.1f}ms")
+        self.lbl_tp_in.setText(f"▼ {kb_in:.1f} KB/s")
+        self.lbl_tp_out.setText(f"▲ {kb_out:.1f} KB/s")
 
     def _on_engine_error(self, err_msg: str):
         self.pill_switch.set_active(False)
