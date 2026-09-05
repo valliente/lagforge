@@ -1,11 +1,13 @@
-# LagForge ⚡
+﻿# LagForge
+
 > **Obsidian Glassmorphic Global Latency & Network Condition Control for Windows (v1.101)**
 
 LagForge is a high-performance Windows desktop application built with **Python**, **PySide6**, and **WinDivert** (`pydivert`) that injects artificial, controlled latency, Gaussian jitter, and packet loss into system-wide network traffic for network resilience testing, game simulation, and QA engineering.
 
 ---
 
-## 📸 Preview & Design
+## Interface & Design
+
 Designed with an **Obsidian Dark Glassmorphism** aesthetic:
 - **Base Background:** Deep Obsidian / Pitch Slate (`#090A0F`)
 - **Card Panels:** Frosted translucent slate (`#13151E`) with subtle `1px` borders (`#212638`) and `12px` rounded corners
@@ -14,21 +16,23 @@ Designed with an **Obsidian Dark Glassmorphism** aesthetic:
 
 ---
 
-## 🚀 Key Features (v1.101)
-- 🎛️ **Precision Delay Slider**: Dynamically adjust latency from `0ms` to `1000ms` in real-time without restarting the network filter.
-- 〰️ **Gaussian Packet Jitter**: Simulate erratic, fluctuating connections with customizable jitter (`0ms` to `±100ms`).
-- 🛑 **Packet Drop Simulation**: Emulate real-world packet loss (`0%` to `25%`) with stochastic drop algorithms.
-- ⚡ **One-Click Presets & Profiles**: Instant switching between presets (`+50ms`, `+100ms`, `+200ms`, `+500ms`) or save custom named profiles (`config.json`).
-- ⌨️ **Global Hotkey Toggle**: Press `F8` or `Ctrl+Shift+L` anywhere in Windows to toggle lag on/off without alt-tabbing out of fullscreen games.
-- 📥 **System Tray Quick-Switch**: Context menu to toggle active state or switch latency presets directly from the notification area.
-- 🔄 **Bidirectional Half-RTT Ping Engine**: Automatically splits target ping in half (`target_ping / 2.0`) to model real-world inbound and outbound RTT symmetry.
-- 📊 **Real-time Telemetry & Sparkline**: Live packet counter, dropped packet counter, throughput (KB/s in/out), and split Inbound/Outbound millisecond readouts.
-- 🛡️ **Zero-Drop Clean Teardown**: Automatically drains and safely re-injects pending packets on shutdown so your network stack never stalls or hangs.
-- 🔑 **Automatic UAC Elevation**: Verifies Windows Administrator privileges at startup and requests elevation seamlessly via `runas`.
+## Key Features (v1.101)
+
+- **Precision Delay Slider**: Dynamically adjust latency from `0ms` to `1000ms` in real-time without restarting the network filter.
+- **Gaussian Packet Jitter**: Simulate erratic, fluctuating connections with customizable jitter (`0ms` to `±100ms`).
+- **Packet Drop Simulation**: Emulate real-world packet loss (`0%` to `25%`) with stochastic drop algorithms.
+- **Preset Configurations & Profiles**: Instant switching between presets (`+50ms`, `+100ms`, `+200ms`, `+500ms`) or save custom named profiles (`config.json`).
+- **Global Hotkey Toggle**: Press `F8` or `Ctrl+Shift+L` anywhere in Windows to toggle lag on/off without alt-tabbing out of fullscreen games.
+- **System Tray Integration**: Context menu to toggle active state or switch latency presets directly from the notification area.
+- **Bidirectional Half-RTT Ping Engine**: Automatically splits target ping in half (`target_ping / 2.0`) to model real-world inbound and outbound RTT symmetry.
+- **Real-Time Telemetry & Sparkline**: Live packet counter, dropped packet counter, throughput (KB/s in/out), and split Inbound/Outbound millisecond readouts.
+- **Zero-Drop Clean Teardown**: Automatically drains and safely re-injects pending packets on shutdown so your network stack never stalls or hangs.
+- **Automatic UAC Elevation**: Verifies Windows Administrator privileges at startup and requests elevation seamlessly via `runas`.
 
 ---
 
-## 🛠️ Project Structure
+## Project Structure
+
 ```
 lagforge/
 ├── main.py                # App entry point, UAC admin elevation wrapper, hotkey wiring
@@ -53,7 +57,7 @@ lagforge/
 
 ---
 
-## 📦 Installation & Requirements
+## Installation & Requirements
 
 ### Prerequisites
 - **Operating System:** Windows 10 / Windows 11 (64-bit)
@@ -87,14 +91,16 @@ lagforge/
 
 ---
 
-## ⌨️ Hotkeys & Shortcuts
+## Hotkeys & Shortcuts
+
 | Key | Action |
 | :--- | :--- |
 | `F8` | Global Active / Inactive Toggle |
 | `Ctrl+Shift+L` | Global Active / Inactive Toggle |
-| `Profiles ⚙` | Open Custom Presets Manager |
+| `Profiles` | Open Custom Presets Manager |
 
 ---
 
-## 📜 License
+## License
+
 MIT License. Created for network simulation, developer testing, and game resilience profiling.
